@@ -5,6 +5,8 @@ import pandas as pd
 import pyarrow as pa
 import quivr as qv
 from astroquery.jplhorizons import Horizons
+import requests
+import pyarrow.compute as pc
 
 from ...coordinates.cartesian import CartesianCoordinates
 from ...coordinates.cometary import CometaryCoordinates
@@ -403,3 +405,103 @@ def query_horizons(
     )
 
     return total_orbits
+
+class RotationalPeriodInput(qv.Table):
+    """Per-observation inputs for rotational period analysis:
+    heliocentric and topocentric distances and phase angle from Horizons."""
+    object_id = qv.LargeStringColumn()
+    obs_time = Timestamp.as_column()
+    sun_range = qv.Float64Column()   # heliocentric distance r [AU]
+    obs_range = qv.Float64Column()   # topocentric distance Δ [AU]
+    angle = qv.Float64Column()       # Sun-Target-Observer phase angle α [deg]
+
+def _parse_rotational_period_input_response(object_id: str, text: str) -> RotationalPeriodInput:
+    lines = text.splitlines()
+    row = 0
+    while row < len(lines) and not lines[row].startswith("$$SOE"):
+        row += 1
+    row += 1
+    jd = []
+    sun_range = []
+    obs_range = []
+    angle = []
+    while row < len(lines) and not lines[row].startswith("$$EOE"):
+        parts = lines[row].split(",")
+        # text date, JD data, solar presence, lunar presence, sun range to target AU,
+        # observer range to target AU, Sun-Target-Observer angle degrees, <-- extra comma
+        assert len(parts) >= 7, f"Actual length {len(parts)}: {parts}"
+        jd.append(float(parts[1]))
+        sun_range.append(float(parts[4]))
+        obs_range.append(float(parts[5]))
+        angle.append(float(parts[6]))
+        row += 1
+    return RotationalPeriodInput.from_kwargs(
+        object_id = [object_id] * len(jd),
+        obs_time = Timestamp.from_jd(jd),
+        sun_range = sun_range,
+        obs_range = obs_range,
+        angle = angle,
+    )
+
+
+def query_rotational_period_inputs_from_horizons(object_id: str, stn: str, obs_times: pa.DoubleArray) -> RotationalPeriodInput:
+    API_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
+    chunk_size = 30 # 100 is too much
+    start_chunk = 0
+    sess = requests.Session() # TODO: parallel queries?
+    # Selected: 
+    # "19: heliocentric range and range rate"
+    # "20: observer range and range rate"
+    # "24: Sun-target-observer ~PHASE angle"
+    # Suppress rates, only use ranges
+    params = {
+        "format": "text",
+        "COMMAND": f"'DES={object_id};'",
+        "OBJ_DATA": "NO", # default YES
+        # "MAKE_EPHEM": "YES", # default
+        #"EPHEM_TYPE": "OBSERVER", # default
+        "CENTER": stn,
+        "TIME_TYPE": "UT",
+        "TLIST_TYPE": "MJD",
+        "QUANTITIES": "'19,20,24'",
+        "CAL_FORMAT": "BOTH", # CAL & JD
+        "CSV_FORMAT": "YES",
+        # "RANGE_UNITS": "AU", # default
+        "SUPPRESS_RANGE_RATE": "YES", # default NO
+    }
+    collections = []
+    while start_chunk < len(obs_times):
+        tlist = [f"'{v}'" for v in obs_times[start_chunk:start_chunk+chunk_size]]
+        start_chunk += chunk_size
+        params["TLIST"] = " ".join(tlist)
+        resp = sess.get(
+            API_URL, params=params, timeout=10
+        )
+        resp.raise_for_status()
+        collections.append(_parse_rotational_period_input_response(object_id, resp.text))
+    return qv.concatenate(collections)
+
+def cache_or_query_rotational_period_inputs(object_id: str,
+                                            stn: str,
+                                            obs_times: pa.DoubleArray,
+                                            cache_file: str,
+                                            force_query: bool = False,
+                                            quiet: bool = False) -> RotationalPeriodInput:
+    
+    try:
+        input_data = RotationalPeriodInput.from_parquet(cache_file)
+        if not quiet:
+            print(f"Read total {len(input_data)} records")
+    except:
+        print(f"Failed to read {cache_file}")
+        input_data = RotationalPeriodInput.empty()
+    result = input_data.apply_mask(pc.equal(input_data.object_id, object_id))
+    if force_query or len(result) == 0:
+        print(f"Query API for {object_id} and {len(obs_times)} timestamps")
+        result = query_rotational_period_inputs_from_horizons(object_id, stn, obs_times)
+        input_data = qv.concatenate([
+            input_data.apply_mask(pc.not_equal(input_data.object_id, object_id)),
+            result,
+            ])
+        input_data.to_parquet(cache_file)
+    return result

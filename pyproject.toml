@@ -52,6 +52,7 @@ dependencies = [
   "naif-eop-historical",
   "naif-earth-itrf93",
   "timezonefinder",
+  "ipykernel",
 ]
 
 [project.optional-dependencies]
