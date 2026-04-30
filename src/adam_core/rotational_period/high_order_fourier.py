@@ -48,7 +48,7 @@ def _get_freqs(fmin: float, fmax: float, arc_len: float) -> np.ndarray:
 
 
 def _fit_fourier(
-    freq: float, k: int, obs_v, obs_t, alpha_deg, bands, weights, kind: Optional[int]
+    freq: float, k: int, obs_v, obs_t, c1c2_columns, alpha_deg, band_columns, weights, kind: Optional[int]
 ) -> Tuple[np.ndarray, float, int]:
     # kind == None means use c1,c2. kind < 0 means fit G12*, kind >= 0 selects from G_VALUES
     # Returned values are [c1, c2, A1, B1, ..., Ak, Bk, H_g, H_i, H_r, H_u], length 2+2*k+4
@@ -73,12 +73,13 @@ def _fit_fourier(
     params = np.zeros(num_params)
 
     # Populate A matrix based on the choice of alpha dependency function
-    alpha_rad = np.deg2rad(alpha_deg)
+    # alpha_rad = np.deg2rad(alpha_deg)
     if kind is None:
         # Model phi(alpha) = c1*alpha + c2*alpha^2
         # X=[c1, c2, A1, B1, ..., Ak, Bk, Hg, Hi, Hr, Hu ]
-        A[:, 0] = alpha_rad  # *c1
-        A[:, 1] = alpha_rad * alpha_rad  # *c2
+        A[:, :2] = c1c2_columns
+        # A[:, 0] = alpha_rad  # *c1
+        # A[:, 1] = alpha_rad * alpha_rad  # *c2
         idx = 2
     else:
         # Either known kind or fitting g12*. In both cases nothing goes into
@@ -94,19 +95,14 @@ def _fit_fourier(
         A[:, idx + 1] = np.sin(arg)
         idx += 2
 
-    # Pick color. TODO: use matrix operations here
-    color_offset = {"g": 0, "i": 1, "r": 2, "u": 3}
-    for i in range(num_obs):
-        color = bands[i].as_py()
-        try:
-            A[i, idx + color_offset[color]] = 1
-        except KeyError:
-            raise BaseException(f"Bad color [{color}] index {i}")
+    # Pick colors
+    A[:, -4:] = band_columns
 
     # Build weighted matrices. obs_v is already adjusted if we use known G1,G2
-    W = np.diag(np.sqrt(weights))
-    Aw = np.dot(W, A)
-    Bw = np.dot(obs_v, W)
+    # w = np.sqrt(weights)
+    Aw = A * weights[:, None]
+    Bw = obs_v * weights
+    weights2 = weights ** 2
 
     # Function for computing residuals if using non-linear least squares
     # This is used only if we have g12star part, but make it generic unless
@@ -117,7 +113,7 @@ def _fit_fourier(
     def func(par):
         if use_g12star:
             corr = hg12star_correction(alpha_deg, g12star=par[0])
-            return Aw[included, :] @ par[1:] + np.dot(corr, W)[included] - Bw[included]
+            return Aw[included, :] @ par[1:] + (corr * weights)[included] - Bw[included]
         return Aw[included, :] @ par - Bw[included]
 
     # May need to throw away outliers
@@ -146,9 +142,9 @@ def _fit_fourier(
         # This includes already rejected, it's okay
         if use_g12star:
             corr = hg12star_correction(alpha_deg, g12star=values[0])
-            res = (A @ values[1:] + corr - obs_v) ** 2 * weights
+            res = (A @ values[1:] + corr - obs_v) ** 2 * weights2
         else:
-            res = (A @ values - obs_v) ** 2 * weights
+            res = (A @ values - obs_v) ** 2 * weights2
         n_incl = np.sum(included)
         # Discard rejected when computing sigma^2
         sigma2 = np.sum(res[included]) / (n_incl - num_params)
@@ -163,7 +159,7 @@ def _fit_fourier(
         values = np.concatenate([[1e6], values])
     elif kind is not None:
         values = np.concatenate([[kind, 1e6], values])
-    return values, num_obs * sigma2 / np.sum(weights), np.sum(included)
+    return values, num_obs * sigma2 / np.sum(weights2), np.sum(included)
 
 
 def run_fourier(
@@ -179,8 +175,16 @@ def run_fourier(
     arc_length = np.max(obs_time) - np.min(obs_time)
     print(f"Freqs count {freqs.shape}, arc length={arc_length}")
 
-    alpha = np.deg2rad(range_inputs.angle.to_numpy())
-    weights = 1 / (np.array([float(w) for w in observation_table["rmsmag"]]) ** 2)
+    # alpha = np.deg2rad(range_inputs.angle.to_numpy())
+    alpha_deg = range_inputs.angle.to_numpy()
+    # weights = 1 / (np.array([float(w) for w in observation_table["rmsmag"]]) ** 2)
+    weights = 1 / observation_table["rmsmag"].to_numpy().astype(np.float64)
+
+    bands = observation_table["band"].to_numpy()
+    band_columns = np.stack( ((bands == 'g'), (bands == 'i'), (bands == 'r'), (bands == 'u')), axis=-1)
+
+    alpha_rad = np.deg2rad(alpha_deg)
+    c1c2_columns = np.stack( (alpha_rad, alpha_rad**2), axis=-1)
 
     # Page 7: for each k, find freq that gives minimum sigma2 for that k
     rows_k, rows_sigma2, rows_freq, rows_n_included, rows_values = [], [], [], [], []
@@ -199,8 +203,9 @@ def run_fourier(
                 k,
                 observed_mags,
                 observed_time,
-                alpha,
-                observation_table["band"],
+                c1c2_columns,
+                alpha_deg,
+                band_columns,
                 weights,
                 kind,
             )
