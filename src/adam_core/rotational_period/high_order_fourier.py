@@ -304,9 +304,10 @@ def amplitude(
         G += values[2 + 2 * j + 1] * np.sin(arg)
     ampl = np.max(G) - np.min(G)
 
-    max_count = sum(
-        1 for i in range(1, len(G) - 1) if G[i - 1] < G[i] and G[i] >= G[i + 1]
-    )
+    max_count = sum((np.roll(G, -1) < G) & (np.roll(G, 1) <= G))
+    # max_count = sum(
+    #     1 for i in range(1, len(G) - 1) if G[i - 1] < G[i] and G[i] >= G[i + 1]
+    # )
     print(f"Count of local maxima {max_count}, G size {len(G)}")
     print(f"Amplitude {ampl}")
 
@@ -331,6 +332,7 @@ def run_complete_fourier(
     min_freq: float = 0.1667,
     max_freq: float = 500,
     preselect_freq: bool = True,
+    g12star_helper_kind: int = 0,
 ) -> FourierFullResult:
     """Run the complete Fourier rotational-period pipeline for one object.
 
@@ -342,7 +344,6 @@ def run_complete_fourier(
     arc_length = np.max(obstime) - np.min(obstime)
     freqs = _get_freqs(min_freq, max_freq, arc_length)
     if kind is not None and kind < 0 and preselect_freq:
-        g12star_helper_kind = 0
         print(
             f"Computing frequency first to make G12* fitting easier, use type {g12star_helper_kind}"
         )  # = '{G_VALUES[g12star_helper_kind][0]}'")
@@ -353,7 +354,7 @@ def run_complete_fourier(
         freq = best_fit.freq[0].as_py()
         print(f"Selected frequency {freq} for period {24.0 / freq} h")
         fit, arc_length = run_fourier(
-            selection, inputs, obstime, kind, np.array([freq])
+            selection, inputs, obstime, kind, np.array([freq/2, freq])
         )
     else:
         fit, arc_length = run_fourier(selection, inputs, obstime, kind, freqs)
