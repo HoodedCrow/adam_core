@@ -1,20 +1,22 @@
 import pickle
+import time
 from typing import Optional, Tuple
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
+import quivr as qv
 import scipy.optimize
 import scipy.stats
 
 from ..constants import DE44X_CONSTANTS
 from ..orbits.query.horizons import RotationalPeriodInput
 from .hg12star import hg12star_correction
-from .types import FourierFitResult, FourierFullResult
+from .types import FourierFitResult, FourierFullResult, RotationalPeriodPhotometry
 
 
 def _adjust_inputs_for_fourier(
-    observation_table: pa.Table,
+    photometry_mag: pa.DoubleArray,
     range_inputs: RotationalPeriodInput,
     obs_time: pa.DoubleArray,
     quiet: bool = False,
@@ -25,7 +27,7 @@ def _adjust_inputs_for_fourier(
     deltas = pc.subtract(obs_time, range_inputs.obs_time.mjd())
     assert pc.max(pc.abs(deltas)).as_py() < 1e-9
 
-    observed_mags = np.array([float(v) for v in observation_table["mag"]])
+    # observed_mags = np.array([float(v) for v in observation_table["mag"]])
     helio_r = range_inputs.sun_range.to_numpy()
     topo_delta = range_inputs.obs_range.to_numpy()
     alpha = range_inputs.angle.to_numpy()
@@ -35,7 +37,7 @@ def _adjust_inputs_for_fourier(
     # Page 6, section 3.1
     # Subtract 5*log10(r*delta) from observational magnitudes
     # print(f"Sizes V={observed_mags.shape}, r={helio_r.shape}, delta={topo_delta.shape}, alpha={alpha.shape}")
-    observed_mags = observed_mags - 5 * np.log10(helio_r * topo_delta)
+    observed_mags = photometry_mag - 5 * np.log10(helio_r * topo_delta)
 
     # Correct timing for speed of light: t = t_obs - delta/c
     observed_time = obs_time - topo_delta / DE44X_CONSTANTS["C"]
@@ -47,12 +49,13 @@ def _get_freqs(fmin: float, fmax: float, arc_len: float) -> np.ndarray:
     N = int(30 * arc_len * (fmax - fmin))
     return np.linspace(fmin, fmax, num=N)
 
+
 def _make_A_matrix(alpha_deg, bands, k, kind):
     use_g12star = kind is not None and kind < 0
     num_obs = len(bands)
     num_params = 2 * k + 4
     if use_g12star:
-        num_params += 1 # include g12*
+        num_params += 1  # include g12*
         A = np.zeros((num_obs, num_params - 1))
     else:
         if kind is None:
@@ -126,15 +129,21 @@ def _fit_fourier(
 
     # Function for computing residuals if using non-linear least squares
     if use_g12star:
+
         def func(par):
             corr = hg12star_correction(alpha_deg, g12star=par[0])
-            return Aw[included, :] @ par[1:] + (corr * root_weights)[included] - Bw[included]
+            return (
+                Aw[included, :] @ par[1:]
+                + (corr * root_weights)[included]
+                - Bw[included]
+            )
 
     # May need to throw away outliers
     converged = False
     while not converged:
         # Use regular least squares unless we have to fit g12star
         if use_g12star:
+            print(f"Run full g12* for freq {freq}")
             # https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html
             lb = [-np.inf] * len(params)
             ub = [np.inf] * len(params)
@@ -178,21 +187,21 @@ def _fit_fourier(
 
 
 def run_fourier(
-    observation_table: pa.Table,
+    photometry: RotationalPeriodPhotometry,
     range_inputs: RotationalPeriodInput,
     obs_time: pa.DoubleArray,
     kind: Optional[int],
     freqs,
 ) -> Tuple[FourierFitResult, float]:
     observed_time, observed_mags = _adjust_inputs_for_fourier(
-        observation_table, range_inputs, obs_time
+        photometry.mag, range_inputs, obs_time
     )
     arc_length = np.max(obs_time) - np.min(obs_time)
     print(f"Freqs count {freqs.shape}, arc length={arc_length}")
 
     alpha_deg = range_inputs.angle.to_numpy()
-    root_weights = 1 / observation_table["rmsmag"].to_numpy().astype(float)
-    bands = observation_table["band"].to_numpy()
+    root_weights = 1 / photometry.rmsmag.to_numpy()
+    bands = photometry.band.to_numpy(zero_copy_only=False)
 
     if kind is not None and kind > 0:
         observed_mags -= hg12star_correction(alpha_deg, kind=kind)
@@ -324,10 +333,8 @@ def amplitude(
 
 
 def run_complete_fourier(
-    object_id: str,
-    selection,
-    obstime,
-    inputs,
+    photometry: RotationalPeriodPhotometry,
+    horizons: RotationalPeriodInput,
     kind: Optional[int],
     min_freq: float = 0.1667,
     max_freq: float = 500,
@@ -339,7 +346,14 @@ def run_complete_fourier(
     Returns a single-row FourierFullResult with the best-fit summary
     and the winning FourierFitResult row embedded as intermediate_result.
     """
-    print(f"All colors {selection['band'].unique().to_pylist()}")
+    object_id = photometry.object_id.unique()
+    assert (
+        len(object_id) == 1
+    ), f"Expected exactly one object in input data, got {object_id}"
+    object_id = object_id[0].as_py()
+
+    obstime = photometry.obs_time.mjd()
+    print(f"All colors {photometry.band.unique().to_pylist()}")
 
     arc_length = np.max(obstime) - np.min(obstime)
     freqs = _get_freqs(min_freq, max_freq, arc_length)
@@ -348,23 +362,21 @@ def run_complete_fourier(
             f"Computing frequency first to make G12* fitting easier, use type {g12star_helper_kind}"
         )  # = '{G_VALUES[g12star_helper_kind][0]}'")
         fit, arc_length = run_fourier(
-            selection, inputs, obstime, g12star_helper_kind, freqs
+            photometry, horizons, obstime, g12star_helper_kind, freqs
         )
+        print(f"Done computing helper for object {object_id}")
         best_fit = best_row_by_f(fit)
         freq = best_fit.freq[0].as_py()
         print(f"Selected frequency {freq} for period {24.0 / freq} h")
         fit, arc_length = run_fourier(
-            selection, inputs, obstime, kind, np.array([freq/2, freq])
+            photometry, horizons, obstime, kind, np.array([freq / 2, freq])
         )
     else:
-        fit, arc_length = run_fourier(selection, inputs, obstime, kind, freqs)
+        fit, arc_length = run_fourier(photometry, horizons, obstime, kind, freqs)
 
     best_fit = best_row_by_f(fit)
     ampl, color_gr, color_gi, color_ri, elongation, max_count = amplitude(
-        best_fit, np.average(inputs.angle)
-    )
-    print(
-        f"Angle in degrees: average={np.average(inputs.angle)}, mean={np.mean(inputs.angle)}, median={np.median(inputs.angle)}"
+        best_fit, np.average(horizons.angle)
     )
     period_h = 24.0 / best_fit.freq[0].as_py()
     if max_count < 3:
@@ -384,3 +396,52 @@ def run_complete_fourier(
         color_ri=[color_ri],
         elongation=[elongation],
     )
+
+
+def kind_to_method(kind: Optional[int]) -> str:
+    if kind is None:
+        return "Fourier c1c2"
+    elif kind < 0:
+        return "Fourier GH12*"
+    else:
+        return f"Fourier type{kind}"
+
+
+def run_fourier_cached(
+    object_id: str,
+    photometry: RotationalPeriodPhotometry,
+    horizons: RotationalPeriodInput,
+    kind: Optional[int],
+    cache_file: Optional[str],
+    force_reload: bool = False,
+):
+    method = kind_to_method(kind)
+    try:
+        # Let it throw on None
+        output_data = FourierFullResult.from_parquet(cache_file or "")
+        print(f"Read total {len(output_data)} records from {cache_file}")
+    except:
+        print(f"Failed to read {cache_file}")
+        output_data = FourierFullResult.empty()
+    mask = pc.and_(
+        pc.equal(output_data.object_id, object_id), pc.equal(output_data.method, method)
+    )
+    result = output_data.apply_mask(mask)
+    print(f"Got {len(result)} records out of {len(output_data)}")
+    if force_reload or len(result) == 0:
+        print(f"Recomputing for object {object_id} kind={kind}")
+        start = time.perf_counter_ns()
+        result = run_complete_fourier(photometry, horizons, kind)
+        runtime = time.perf_counter_ns() - start
+        print(f"For runtime {runtime} {type(runtime)}")
+        print(f"For method '{method}' {type(method)}")
+        result = result.set_column("runtime", [runtime])
+        result = result.set_column("method", pa.array([method], type=pa.large_string()))
+        if cache_file is not None:
+            output_data = qv.concatenate(
+                [output_data.apply_mask(pc.invert(mask)), result]
+            )
+            output_data.to_parquet(cache_file)
+    else:
+        print(f"Return cached result for {object_id} method {method}")
+    return result

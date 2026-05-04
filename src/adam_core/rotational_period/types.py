@@ -1,6 +1,19 @@
 import pyarrow as pa
 import quivr as qv
 
+from ..time import Timestamp
+
+
+class RotationalPeriodPhotometry(qv.Table):
+    """Input observations for rotational period calculation."""
+
+    object_id = qv.LargeStringColumn()
+    stn = qv.LargeStringColumn()
+    obs_time = Timestamp.as_column()
+    band = qv.LargeStringColumn()
+    mag = qv.Float64Column()
+    rmsmag = qv.Float64Column()
+
 
 class FourierFitResult(qv.Table):
     """One row per Fourier order k (2–6) tried by run_fourier.
@@ -25,13 +38,11 @@ class FourierFullResult(qv.Table):
     """Complete output of Fourier fit"""
 
     object_id = qv.LargeStringColumn()
-    num_obs = qv.Int64Column(
-        nullable=True
-    )  # Total number of observations available, with outliers
+    # Total number of observations available, with outliers
+    num_obs = qv.Int64Column(nullable=True)
     arc_days = qv.Float64Column(nullable=True)
-    intermediate_result = qv.BinaryColumn(
-        nullable=True
-    )  # Multiple rows of FourierFitResult
+    # Multiple rows of FourierFitResult
+    intermediate_result = qv.BinaryColumn(nullable=True)
     selected_k = qv.Int64Column(nullable=True)
     count_local_maxima = qv.Int64Column(nullable=True)
     period_h = qv.Float64Column(nullable=True)
@@ -40,3 +51,5 @@ class FourierFullResult(qv.Table):
     color_gi = qv.Float64Column(nullable=True)
     color_ri = qv.Float64Column(nullable=True)
     elongation = qv.Float64Column(nullable=True)
+    runtime = qv.Int64Column(nullable=True)
+    method = qv.LargeStringColumn(nullable=True)
