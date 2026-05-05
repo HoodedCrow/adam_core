@@ -145,17 +145,15 @@ def _fit_fourier(
         if use_g12star:
             print(f"Run full g12* for freq {freq}")
             # https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html
-            lb = [-np.inf] * len(params)
-            ub = [np.inf] * len(params)
-            lb[0], ub[0] = 0.0, 1.0  # bounds for g12*
+            # Setting [0,1] bounds on G12* leads to pretty bad answers. G12* fit to G_VALUES is not
+            # quite linear. In the interest of matching the paper, let G12* get out of the interval.
             result = scipy.optimize.least_squares(
-                func, params, bounds=(lb, ub), verbose=0
+                func, params, verbose=0,
             )
             if not result.success:
                 print(f"Non-linear least squares failed:\n{result}")
                 return np.zeros(2 + 2 * k + 4), -1, -1
             values = result.x
-            print(f"Mask {result.active_mask}")
         else:
             values, _residuals, _rank, _singulars = np.linalg.lstsq(
                 Aw[included, :], Bw[included]
@@ -203,7 +201,7 @@ def run_fourier(
     root_weights = 1 / photometry.rmsmag.to_numpy()
     bands = photometry.band.to_numpy(zero_copy_only=False)
 
-    if kind is not None and kind > 0:
+    if kind is not None and kind >= 0:
         observed_mags -= hg12star_correction(alpha_deg, kind=kind)
 
     # Page 7: for each k, find freq that gives minimum sigma2 for that k
@@ -339,7 +337,7 @@ def run_complete_fourier(
     min_freq: float = 0.1667,
     max_freq: float = 500,
     preselect_freq: bool = True,
-    g12star_helper_kind: int = 0,
+    g12star_helper_kind: int = 2, # type E
 ) -> FourierFullResult:
     """Run the complete Fourier rotational-period pipeline for one object.
 
@@ -367,14 +365,19 @@ def run_complete_fourier(
         print(f"Done computing helper for object {object_id}")
         best_fit = best_row_by_f(fit)
         freq = best_fit.freq[0].as_py()
-        print(f"Selected frequency {freq} for period {24.0 / freq} h")
+        print(f"Selected from helper frequency {freq} for period {24.0 / freq} h")
+        # Just in case, allow for doubling of the period here
         fit, arc_length = run_fourier(
-            photometry, horizons, obstime, kind, np.array([freq / 2, freq])
+            photometry, horizons, obstime, kind, np.array([freq/2, freq])
         )
+        g12star = fit.values[0][1].as_py()
+        if g12star<0.0 or g12star>1.0:
+            print(f"G12* value outside [0,1] range: {g12star}")
     else:
         fit, arc_length = run_fourier(photometry, horizons, obstime, kind, freqs)
 
     best_fit = best_row_by_f(fit)
+    # print(f"Final output {best_fit.values.to_pylist()}")
     ampl, color_gr, color_gi, color_ri, elongation, max_count = amplitude(
         best_fit, np.average(horizons.angle)
     )
@@ -429,12 +432,10 @@ def run_fourier_cached(
     result = output_data.apply_mask(mask)
     print(f"Got {len(result)} records out of {len(output_data)}")
     if force_reload or len(result) == 0:
-        print(f"Recomputing for object {object_id} kind={kind}")
+        print(f"Recomputing Fourier for object {object_id} kind={kind}")
         start = time.perf_counter_ns()
         result = run_complete_fourier(photometry, horizons, kind)
         runtime = time.perf_counter_ns() - start
-        print(f"For runtime {runtime} {type(runtime)}")
-        print(f"For method '{method}' {type(method)}")
         result = result.set_column("runtime", [runtime])
         result = result.set_column("method", pa.array([method], type=pa.large_string()))
         if cache_file is not None:
