@@ -19,7 +19,7 @@ def _query_rotational_period_photometry_inputs(
 ):
     query = f"""SELECT obs.obstime, obs.mag, obs.rmsmag, obs.band 
                 FROM {dataset_id}.public_obs_sbn AS obs
-                WHERE obs.stn = '{stn}' AND obs.provid = '{object_id}';"""
+                WHERE obs.stn = '{stn}' AND obs.provid = '{object_id}' AND obs.rmsmag IS NOT NULL;"""
     client = bigquery.Client(project=os.environ["MPCQ_PROJECT_ID"])
     query_job = client.query(query)
     results = query_job.result()
