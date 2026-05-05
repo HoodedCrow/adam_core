@@ -1,3 +1,4 @@
+import pyarrow as pa
 import pyarrow.compute as pc
 import quivr as qv
 
@@ -220,15 +221,16 @@ PAPER_TABLE2 = PaperTable2.from_kwargs(
 
 def get_target_record_from_paper(object_id):
     theirs = PAPER_TABLE2.apply_mask(pc.equal(PAPER_TABLE2.designation, object_id))
+    arc_days = theirs.arc_days[0].cast(pa.float64())
     return FourierFullResult.from_kwargs(
-        object_id=theirs.designation,
-        num_obs=theirs.num_observations,
-        arc_days=theirs.arc_days,
-        period_h=theirs.period_fourier,
-        amplitude=theirs.amplitude_fourier,
-        color_gr=theirs.g_minus_r_fourier,
-        color_gi=theirs.g_minus_i_fourier,
-        color_ri=theirs.r_minus_i_fourier,
-        elongation=theirs.axial_elongation,
-        method=["Fourier target"],
+        object_id=[theirs.designation[0], theirs.designation[0]],
+        num_obs=[theirs.num_observations[0], theirs.num_observations[0]],
+        arc_days=[arc_days, arc_days],
+        period_h=[theirs.period_fourier[0], theirs.period_lsm[0]],
+        amplitude=[theirs.amplitude_fourier[0], theirs.amplitude_lsm[0]],
+        color_gr=[theirs.g_minus_r_fourier[0], theirs.g_minus_r_lsm[0]],
+        color_gi=[theirs.g_minus_i_fourier[0], theirs.g_minus_i_lsm[0]],
+        color_ri=[theirs.r_minus_i_fourier[0], theirs.r_minus_i_lsm[0]],
+        elongation=[theirs.axial_elongation[0], None],
+        method=["Fourier target", "LSM target"],
     )

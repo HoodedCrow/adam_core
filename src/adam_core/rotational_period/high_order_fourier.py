@@ -148,7 +148,9 @@ def _fit_fourier(
             # Setting [0,1] bounds on G12* leads to pretty bad answers. G12* fit to G_VALUES is not
             # quite linear. In the interest of matching the paper, let G12* get out of the interval.
             result = scipy.optimize.least_squares(
-                func, params, verbose=0,
+                func,
+                params,
+                verbose=0,
             )
             if not result.success:
                 print(f"Non-linear least squares failed:\n{result}")
@@ -337,7 +339,7 @@ def run_complete_fourier(
     min_freq: float = 0.1667,
     max_freq: float = 500,
     preselect_freq: bool = True,
-    g12star_helper_kind: int = 2, # type E
+    g12star_helper_kind: int = 2,  # type E
 ) -> FourierFullResult:
     """Run the complete Fourier rotational-period pipeline for one object.
 
@@ -368,10 +370,10 @@ def run_complete_fourier(
         print(f"Selected from helper frequency {freq} for period {24.0 / freq} h")
         # Just in case, allow for doubling of the period here
         fit, arc_length = run_fourier(
-            photometry, horizons, obstime, kind, np.array([freq/2, freq])
+            photometry, horizons, obstime, kind, np.array([freq / 2, freq])
         )
         g12star = fit.values[0][1].as_py()
-        if g12star<0.0 or g12star>1.0:
+        if g12star < 0.0 or g12star > 1.0:
             print(f"G12* value outside [0,1] range: {g12star}")
     else:
         fit, arc_length = run_fourier(photometry, horizons, obstime, kind, freqs)
