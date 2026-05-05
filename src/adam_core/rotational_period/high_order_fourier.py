@@ -1,11 +1,9 @@
 import pickle
-import time
 from typing import Optional, Tuple
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
-import quivr as qv
 import scipy.optimize
 import scipy.stats
 
@@ -13,6 +11,7 @@ from ..constants import DE44X_CONSTANTS
 from ..orbits.query.horizons import RotationalPeriodInput
 from .hg12star import hg12star_correction
 from .types import FourierFitResult, FourierFullResult, RotationalPeriodPhotometry
+from .utils import run_cached
 
 
 def _adjust_inputs_for_fourier(
@@ -420,31 +419,10 @@ def run_fourier_cached(
     cache_file: Optional[str],
     force_reload: bool = False,
 ):
-    method = kind_to_method(kind)
-    try:
-        # Let it throw on None
-        output_data = FourierFullResult.from_parquet(cache_file or "")
-        print(f"Read total {len(output_data)} records from {cache_file}")
-    except:
-        print(f"Failed to read {cache_file}")
-        output_data = FourierFullResult.empty()
-    mask = pc.and_(
-        pc.equal(output_data.object_id, object_id), pc.equal(output_data.method, method)
+    return run_cached(
+        object_id,
+        kind_to_method(kind),
+        cache_file,
+        lambda: run_complete_fourier(photometry, horizons, kind),
+        force_reload=force_reload,
     )
-    result = output_data.apply_mask(mask)
-    print(f"Got {len(result)} records out of {len(output_data)}")
-    if force_reload or len(result) == 0:
-        print(f"Recomputing Fourier for object {object_id} kind={kind}")
-        start = time.perf_counter_ns()
-        result = run_complete_fourier(photometry, horizons, kind)
-        runtime = time.perf_counter_ns() - start
-        result = result.set_column("runtime", [runtime])
-        result = result.set_column("method", pa.array([method], type=pa.large_string()))
-        if cache_file is not None:
-            output_data = qv.concatenate(
-                [output_data.apply_mask(pc.invert(mask)), result]
-            )
-            output_data.to_parquet(cache_file)
-    else:
-        print(f"Return cached result for {object_id} method {method}")
-    return result

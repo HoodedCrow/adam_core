@@ -487,33 +487,3 @@ def query_rotational_period_inputs_from_horizons(
             _parse_rotational_period_input_response(object_id, resp.text)
         )
     return qv.concatenate(collections)
-
-
-def cache_or_query_rotational_period_inputs(
-    object_id: str,
-    stn: str,
-    obs_times: pa.DoubleArray,
-    cache_file: str,
-    force_query: bool = False,
-    quiet: bool = False,
-) -> RotationalPeriodInput:
-
-    try:
-        input_data = RotationalPeriodInput.from_parquet(cache_file)
-        if not quiet:
-            print(f"Read total {len(input_data)} records")
-    except Exception:
-        print(f"Failed to read {cache_file}")
-        input_data = RotationalPeriodInput.empty()
-    result = input_data.apply_mask(pc.equal(input_data.object_id, object_id))
-    if force_query or len(result) == 0:
-        print(f"Query API for {object_id} and {len(obs_times)} timestamps")
-        result = query_rotational_period_inputs_from_horizons(object_id, stn, obs_times)
-        input_data = qv.concatenate(
-            [
-                input_data.apply_mask(pc.not_equal(input_data.object_id, object_id)),
-                result,
-            ]
-        )
-        input_data.to_parquet(cache_file)
-    return result

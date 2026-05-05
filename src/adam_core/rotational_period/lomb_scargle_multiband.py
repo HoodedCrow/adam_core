@@ -1,9 +1,6 @@
-import time
 from typing import Optional, Tuple
 
 import numpy as np
-import pyarrow.compute as pc
-import quivr as qv
 from gatspy.periodic import LombScargleMultiband
 
 from .types import FourierFullResult, RotationalPeriodPhotometry
@@ -115,34 +112,15 @@ def run_lsm(
 def run_gatspy_lsm_cached(
     object_id: str,
     photometry: RotationalPeriodPhotometry,
-    # mag_v: float,
     cache_file: Optional[str],
     force_reload: bool = False,
 ):
-    try:
-        # Let it throw on None
-        output_data = FourierFullResult.from_parquet(cache_file or "")
-        print(f"Read total {len(output_data)} records from {cache_file}")
-    except:
-        print(f"Failed to read {cache_file}")
-        output_data = FourierFullResult.empty()
-    mask = pc.and_(
-        pc.equal(output_data.object_id, object_id),
-        pc.equal(output_data.method, GATSPY_METHOD),
+    from .utils import run_cached
+
+    return run_cached(
+        object_id,
+        GATSPY_METHOD,
+        cache_file,
+        lambda: run_lsm(photometry),
+        force_reload=force_reload,
     )
-    result = output_data.apply_mask(mask)
-    print(f"Got {len(result)} records out of {len(output_data)}")
-    if force_reload or len(result) == 0:
-        print(f"Recomputing Gatspy LSM for object {object_id}")
-        start = time.perf_counter_ns()
-        result = run_lsm(photometry)  # , mag_v)
-        runtime = time.perf_counter_ns() - start
-        result = result.set_column("runtime", [runtime])
-        if cache_file is not None:
-            output_data = qv.concatenate(
-                [output_data.apply_mask(pc.invert(mask)), result]
-            )
-            output_data.to_parquet(cache_file)
-    else:
-        print(f"Return cached result for {object_id} method {GATSPY_METHOD}")
-    return result
