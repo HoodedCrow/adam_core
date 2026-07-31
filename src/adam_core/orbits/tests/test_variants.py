@@ -120,6 +120,11 @@ def test_VariantOrbits_joint_sampling_uses_extended_covariance():
             A1=[1.0e-13],
             A2=[-2.0e-13],
             A3=[4.0e-13],
+            ALN=[0.1112620426],
+            NK=[4.6142],
+            NM=[2.15],
+            NN=[5.093],
+            R0=[2.808],
         ),
         coordinates=CartesianCoordinates.from_kwargs(
             x=[1.0],
@@ -138,6 +143,9 @@ def test_VariantOrbits_joint_sampling_uses_extended_covariance():
 
     assert len(variants) == 19
     assert len(np.unique(variants.non_gravitational_parameters.A1.to_pylist())) > 1
+    # The g(r) constants are fixed model constants: every variant inherits
+    # the parent's values unchanged.
+    assert variants.non_gravitational_parameters.ALN.to_pylist() == [0.1112620426] * 19
     assert len(np.unique(variants.non_gravitational_parameters.A2.to_pylist())) > 1
     assert len(np.unique(variants.non_gravitational_parameters.A3.to_pylist())) > 1
 

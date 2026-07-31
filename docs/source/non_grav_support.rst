@@ -44,16 +44,28 @@ MPCQ
 Canonical Schema
 ----------------
 
-``adam_core.orbits.NonGravitationalParameters`` stores only the Marsden-style
-radial/transverse/normal accelerations supported for ingestion and storage:
+``adam_core.orbits.NonGravitationalParameters`` stores the Marsden-style
+accelerations plus the fixed g(r) model constants:
 
 - ``source``: provenance of the solution (for example ``"SBDB"``,
   ``"NEOCC"``, ``"MPCQ"``).
-- ``A1``, ``A2``, ``A3`` in au / d^2.
+- ``A1``, ``A2``, ``A3`` in au / d^2 -- the fitted accelerations. Their
+  uncertainties live in the extended coordinate covariance.
+- ``ALN``, ``NK``, ``NM``, ``NN``, ``R0`` (R0 in au) -- the Marsden g(r)
+  constants. These are fixed per solution (sources report them without
+  uncertainties and they never appear in solution covariances), so they are
+  stored as plain values and are NOT covariance dimensions; they select the
+  force law the propagator must apply. Null constants mean the standard
+  asteroid convention g(r) = (1 au / r)^2. SBDB lists constants only when
+  they differ from the classic Marsden (1973) comet standard, so the importer
+  fills unlisted constants with the standard values on any solution with
+  fitted accelerations.
 
-Source parameters outside this set (``DT``, ``AMRAT``, ``RHO``, Marsden
-``g(r)`` constants, ...) are not stored: importers drop their values and
-marginalize their covariance dimensions out, logging a warning.
+Fitted source parameters outside this set (``DT``, ``AMRAT``, ``RHO``) are
+not stored: importers drop their values and marginalize their covariance
+dimensions out, logging a warning. Note this makes DT-fit comet solutions an
+approximation (the asymmetric-outgassing time offset is not representable and
+ASSIST implements no equivalent force).
 
 Extended Coordinate Covariance
 ------------------------------

@@ -340,9 +340,27 @@ def test__sbdb_nongrav_row_extracts_supported_fields() -> None:
     assert row["A1"] == 5.0e-13
     assert row["A2"] == -2.901766637153165e-14
     assert row["A3"] is None
-    # Model parameters outside A1/A2/A3 (ALN, NK, NM, R0, ...) are not
-    # supported for storage and are dropped.
-    assert set(row) == {"source", "A1", "A2", "A3"}
+    # The Marsden g(r) constants are stored as plain values; 99942's asteroid
+    # solution lists ALN/NK/NM/R0 explicitly and inherits the standard NN.
+    assert row["ALN"] == 1.0
+    assert row["NK"] == 0.0
+    assert row["NM"] == 2.0
+    assert row["NN"] == 5.093
+    assert row["R0"] == 1.0
+    assert set(row) == {"source", "A1", "A2", "A3", "ALN", "NK", "NM", "NN", "R0"}
+
+
+def test__sbdb_nongrav_row_fills_standard_comet_constants() -> None:
+    # Comet solutions (67P) list no g(r) constants: they are fit under the
+    # classic Marsden standard, which the importer fills in explicitly.
+    payload = _load_sbdb_fixture_payload("67P_phys.json")
+    row = _sbdb_nongrav_row("67P", payload)
+    assert row["A1"] == 1.042451026100725e-9
+    npt.assert_allclose(row["ALN"], 0.1112620426)
+    assert row["NK"] == 4.6142
+    assert row["NM"] == 2.15
+    assert row["NN"] == 5.093
+    assert row["R0"] == 2.808
 
 
 def test__non_gravitational_parameters_from_sbdb_empty() -> None:

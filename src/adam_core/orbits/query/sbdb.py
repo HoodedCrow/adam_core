@@ -23,6 +23,8 @@ from ...coordinates.covariances import (
 from ...coordinates.origin import Origin
 from ...time import Timestamp
 from ..non_gravitational_parameters import (
+    MARSDEN_CONSTANT_FIELDS,
+    MARSDEN_STANDARD_CONSTANTS,
     NON_GRAVITATIONAL_VALUE_FIELDS,
     NonGravitationalParameters,
 )
@@ -546,12 +548,15 @@ def _physical_parameters_from_sbdb(
 
 
 def _empty_nongrav_row() -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "source": None,
         "A1": None,
         "A2": None,
         "A3": None,
     }
+    for name in MARSDEN_CONSTANT_FIELDS:
+        row[name] = None
+    return row
 
 
 def _sbdb_nongrav_row(obj_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -570,15 +575,26 @@ def _sbdb_nongrav_row(obj_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if name is None:
             continue
         name = str(name)
-        if name in NON_GRAVITATIONAL_VALUE_FIELDS:
+        if name in NON_GRAVITATIONAL_VALUE_FIELDS or name in MARSDEN_CONSTANT_FIELDS:
             row[name] = _sbdb_phys_par_value(param)
         else:
             unsupported.append(name)
 
+    # SBDB lists g(r) constants only when they differ from the classic
+    # Marsden, Sekanina & Yeomans (1973) standard, so for a solution with
+    # fitted accelerations any unlisted constants take the standard values
+    # (e.g. comet solutions list none; asteroid solutions list ALN=1, NK=0,
+    # NM=2, R0=1 and inherit the standard NN).
+    if any(row[name] is not None for name in NON_GRAVITATIONAL_VALUE_FIELDS):
+        for name in MARSDEN_CONSTANT_FIELDS:
+            if row[name] is None:
+                row[name] = MARSDEN_STANDARD_CONSTANTS[name]
+
     if unsupported:
         logger.warning(
             "SBDB model parameters %s for object %s are not supported for "
-            "storage (only A1, A2, A3); dropping their values.",
+            "storage (only A1, A2, A3 and the Marsden g(r) constants); "
+            "dropping their values.",
             unsupported,
             obj_id,
         )

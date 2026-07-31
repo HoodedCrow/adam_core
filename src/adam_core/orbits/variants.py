@@ -25,6 +25,7 @@ from ..time import Timestamp
 from ..utils.chunking import process_in_chunks
 from .ephemeris import Ephemeris
 from .non_gravitational_parameters import (
+    MARSDEN_CONSTANT_FIELDS,
     NON_GRAVITATIONAL_VALUE_FIELDS,
     NonGravitationalParameters,
 )
@@ -196,6 +197,14 @@ def _joint_sample_variants(
             A1=sample_array[:, 6],
             A2=sample_array[:, 7],
             A3=sample_array[:, 8],
+            # The Marsden g(r) constants are fixed model constants, not
+            # sampled dimensions: each variant inherits its parent's values.
+            **{
+                name: getattr(orbits.non_gravitational_parameters, name).take(
+                    repeated_indices
+                )
+                for name in MARSDEN_CONSTANT_FIELDS
+            },
         ),
     )
 
@@ -525,6 +534,12 @@ class VariantOrbits(qv.Table):
                         A1=[mean[6]],
                         A2=[mean[7]],
                         A3=[mean[8]],
+                        **{
+                            name: getattr(
+                                object_variants.non_gravitational_parameters, name
+                            ).take([0])
+                            for name in MARSDEN_CONSTANT_FIELDS
+                        },
                     ),
                 )
             else:
