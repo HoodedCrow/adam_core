@@ -227,9 +227,9 @@ class CoordinateCovariances(qv.Table):
         is6 = np.isnan(covariances[:, COORD_DIM:, :]).all(axis=(1, 2)) & np.isnan(
             covariances[:, :, COORD_DIM:]
         ).all(axis=(1, 2))
-        lengths = np.where(
-            is6, COORD_DIM * COORD_DIM, FULL_DIM * FULL_DIM
-        ).astype(np.int64)
+        lengths = np.where(is6, COORD_DIM * COORD_DIM, FULL_DIM * FULL_DIM).astype(
+            np.int64
+        )
         offsets = np.zeros(len(covariances) + 1, dtype=np.int64)
         np.cumsum(lengths, out=offsets[1:])
         flat = np.empty(offsets[-1], dtype=np.float64)
