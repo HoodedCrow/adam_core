@@ -666,8 +666,13 @@ def test_propagate_2body_carries_extended_covariance_through_stm():
         rtol=1e-12,
     )
 
-    # The cross-covariances were transformed (not copied verbatim) ...
-    assert not np.allclose(full_out[:6, 6], full[:6, 6])
+    # The cross-covariances were transformed (not copied verbatim). The
+    # entries are ~1e-21, far below np.allclose's default atol, so the
+    # comparison must be scaled to the column itself.
+    cross_scale = np.abs(full[:6, 6]).max()
+    assert not np.allclose(
+        full_out[:6, 6], full[:6, 6], rtol=0.0, atol=1e-3 * cross_scale
+    )
     # ... by a linear map: the exact 1:2 column ratio survives the STM.
     np.testing.assert_allclose(full_out[:6, 7], 2.0 * full_out[:6, 6], rtol=1e-12)
 

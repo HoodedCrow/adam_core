@@ -22,9 +22,13 @@ if "non_gravitational" not in inspect.getsource(MPCOrbits.orbits):
     )
 
 from ...time import Timestamp  # noqa: E402
+from ..non_gravitational_parameters import MARSDEN_STANDARD_CONSTANTS  # noqa: E402
 
 
 def test_mpcq_orbits_maps_nongrav_parameters_into_adam_core():
+    # The MPC reports a1/a2/a3 in units of 1e-10 au/d^2 and its values are
+    # comet-model fits: mpcq scales them into adam_core's canonical au/d^2
+    # and stamps the standard Marsden g(r) constants on rows with values.
     mpc_orbits = MPCOrbits.from_kwargs(
         requested_provid=["test-a", "test-b"],
         primary_designation=["test-a", "test-b"],
@@ -43,9 +47,9 @@ def test_mpcq_orbits_maps_nongrav_parameters_into_adam_core():
         node_unc=[0.1, 0.2],
         argperi_unc=[0.1, 0.2],
         peri_time_unc=[0.5, 0.6],
-        a1=[None, 1.2e-12],
-        a2=[-8.7e-14, None],
-        a3=[None, 3.4e-14],
+        a1=[None, 1.2e-2],
+        a2=[-8.7e-4, None],
+        a3=[None, 3.4e-4],
         h=[18.0, 19.0],
         g=[0.15, 0.25],
         created_at=Timestamp.from_mjd([60000.0, 60001.0], scale="tdb"),
@@ -55,16 +59,19 @@ def test_mpcq_orbits_maps_nongrav_parameters_into_adam_core():
     orbits = mpc_orbits.orbits()
 
     assert len(orbits) == 2
-    assert orbits.non_gravitational_parameters.source.to_pylist() == ["MPCQ", "MPCQ"]
+    nongrav = orbits.non_gravitational_parameters
+    assert nongrav.source.to_pylist() == ["MPCQ", "MPCQ"]
     np.testing.assert_allclose(
-        orbits.non_gravitational_parameters.A2.to_numpy(zero_copy_only=False)[0],
+        nongrav.A2.to_numpy(zero_copy_only=False)[0],
         -8.7e-14,
     )
     np.testing.assert_allclose(
-        orbits.non_gravitational_parameters.A1.to_numpy(zero_copy_only=False)[1],
+        nongrav.A1.to_numpy(zero_copy_only=False)[1],
         1.2e-12,
     )
     np.testing.assert_allclose(
-        orbits.non_gravitational_parameters.A3.to_numpy(zero_copy_only=False)[1],
+        nongrav.A3.to_numpy(zero_copy_only=False)[1],
         3.4e-14,
     )
+    for name, value in MARSDEN_STANDARD_CONSTANTS.items():
+        assert getattr(nongrav, name).to_pylist() == [value, value]
