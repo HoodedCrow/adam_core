@@ -127,5 +127,9 @@ release; ``adam_core`` itself only carries the parameters through its
 ``supports_non_gravitational_forces`` log a warning when handed orbits with
 non-zero parameter values or a non-gravitational covariance block).
 
-- Real regression coverage includes SBDB ``99942`` end-to-end propagation
-  and a NEOCC ``99942`` parsing-to-ASSIST handoff check.
+- Real regression coverage includes SBDB ``99942`` end-to-end propagation,
+  a NEOCC ``99942`` parsing-to-ASSIST handoff check, and (in adam-assist)
+  frozen JPL Horizons trajectory regressions for all three supported g(r)
+  laws -- inverse-square (99942), standard comet Marsden (C/2022 E3), and a
+  custom tuple (1I/'Oumuamua) -- accurate to tens--hundreds of metres over
+  +/- 300 days against km-to-million-km gravity-only controls.
