@@ -12,6 +12,6 @@ __all__ = [
     "NonGravitationalParameters",
     "Orbits",
     "Trajectory",
-    "VariantOrbits",
     "VariantEphemeris",
+    "VariantOrbits",
 ]
