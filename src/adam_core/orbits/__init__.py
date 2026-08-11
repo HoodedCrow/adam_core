@@ -4,12 +4,14 @@
 from .ephemeris import Ephemeris
 from .non_gravitational_parameters import NonGravitationalParameters
 from .orbits import Orbits
+from .trajectory import Trajectory
 from .variants import VariantEphemeris, VariantOrbits
 
 __all__ = [
     "Ephemeris",
     "NonGravitationalParameters",
     "Orbits",
+    "Trajectory",
     "VariantOrbits",
     "VariantEphemeris",
 ]
