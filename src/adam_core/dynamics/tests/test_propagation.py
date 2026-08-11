@@ -9,9 +9,11 @@ import spiceypy as sp
 from astropy import units as u
 
 from ...coordinates.cartesian import CartesianCoordinates
+from ...coordinates.covariances import CoordinateCovariances
 from ...coordinates.origin import Origin
 from ...dynamics.exceptions import DynamicsNumericalError
 from ...orbits import Orbits
+from ...orbits.non_gravitational_parameters import NonGravitationalParameters
 from ...orbits.physical_parameters import PhysicalParameters
 from ...time import Timestamp
 from ...utils.helpers.orbits import make_real_orbits
@@ -503,6 +505,176 @@ def test_propagate_2body_preserves_physical_parameters():
 
     np.testing.assert_allclose(have_H, expected_H)
     np.testing.assert_allclose(have_G, expected_G)
+
+
+def test_propagate_2body_rejects_non_gravitational_parameters():
+    t0 = Timestamp.from_mjd([60000.0, 60000.0], scale="tdb")
+    orbits = Orbits.from_kwargs(
+        orbit_id=["o1", "o2"],
+        object_id=["o1", "o2"],
+        non_gravitational_parameters=NonGravitationalParameters.from_kwargs(
+            source=["SBDB", "NEOCC"],
+            A1=[None, None],
+            A2=[-8.72e-14, -2.90e-14],
+            A3=[None, None],
+        ),
+        coordinates=CartesianCoordinates.from_kwargs(
+            x=[1.0, 1.2],
+            y=[0.0, 0.1],
+            z=[0.0, 0.0],
+            vx=[0.0, 0.0],
+            vy=[0.017, 0.015],
+            vz=[0.0, 0.0],
+            time=t0,
+            origin=Origin.from_kwargs(code=["SUN", "SUN"]),
+            frame="ecliptic",
+        ),
+    )
+
+    times = Timestamp.from_mjd([60000.0, 60001.0], scale="tdb")
+    with pytest.raises(ValueError, match="does not support non-gravitational"):
+        propagate_2body(orbits, times)
+
+
+def test_propagate_2body_allows_zero_valued_non_gravitational_parameters():
+    # A parameter solved to exactly zero exerts no force, so gravity-only
+    # 2-body propagation of such an orbit is still exact and must not raise.
+    t0 = Timestamp.from_mjd([60000.0], scale="tdb")
+    orbits = Orbits.from_kwargs(
+        orbit_id=["o1"],
+        object_id=["o1"],
+        non_gravitational_parameters=NonGravitationalParameters.from_kwargs(
+            source=["NEOCC"],
+            A1=[None],
+            A2=[0.0],
+            A3=[None],
+        ),
+        coordinates=CartesianCoordinates.from_kwargs(
+            x=[1.0],
+            y=[0.0],
+            z=[0.0],
+            vx=[0.0],
+            vy=[0.017],
+            vz=[0.0],
+            time=t0,
+            origin=Origin.from_kwargs(code=["SUN"]),
+            frame="ecliptic",
+        ),
+    )
+
+    propagated = propagate_2body(
+        orbits, Timestamp.from_mjd([60000.0, 60001.0], scale="tdb")
+    )
+
+    assert len(propagated) == 2
+    assert propagated.non_gravitational_parameters.A2[0].as_py() == 0.0
+
+
+def test_propagate_2body_include_nongrav_false_strips_nongrav():
+    t0 = Timestamp.from_mjd([60000.0], scale="tdb")
+    orbits = Orbits.from_kwargs(
+        orbit_id=["o1"],
+        object_id=["o1"],
+        non_gravitational_parameters=NonGravitationalParameters.from_kwargs(
+            source=["SBDB"],
+            A1=[None],
+            A2=[-8.72e-14],
+            A3=[None],
+        ),
+        coordinates=CartesianCoordinates.from_kwargs(
+            x=[1.0],
+            y=[0.0],
+            z=[0.0],
+            vx=[0.0],
+            vy=[0.017],
+            vz=[0.0],
+            time=t0,
+            origin=Origin.from_kwargs(code=["SUN"]),
+            frame="ecliptic",
+        ),
+    )
+
+    propagated = propagate_2body(
+        orbits,
+        Timestamp.from_mjd([60000.0, 60001.0], scale="tdb"),
+        include_nongrav=False,
+    )
+
+    assert propagated.non_gravitational_parameters.A2[0].as_py() is None
+    assert not propagated.coordinates.covariance.has_nongrav_block()
+
+
+def test_propagate_2body_carries_extended_covariance_through_stm():
+    # Zero-mean A1/A2 with real variance and state cross-covariances is the
+    # one legal path for a 9x9 covariance through 2-body dynamics: the
+    # coordinate block gets the STM, the cross-covariances rotate with it,
+    # and the non-gravitational block is dynamically inert.
+    cov6 = np.diag([1e-14, 1e-14, 1e-14, 1e-16, 1e-16, 1e-16])
+    P = np.zeros((7, 7))
+    P[:6, :6] = cov6
+    P[6, 6] = 1.0
+    P[0, 6] = P[6, 0] = 0.3 * np.sqrt(cov6[0, 0])  # corr(x, w) = 0.3
+
+    a = 1e-13  # au/d^2 scale of the A-parameter uncertainty
+    M = np.zeros((9, 7))
+    M[:6, :6] = np.eye(6)
+    M[6, 6] = a  # A1 = a * w
+    M[7, 6] = 2.0 * a  # A2 = 2a * w
+    full = M @ P @ M.T
+
+    def _orbit(covariance: np.ndarray) -> Orbits:
+        return Orbits.from_kwargs(
+            orbit_id=["o1"],
+            object_id=["o1"],
+            non_gravitational_parameters=NonGravitationalParameters.from_kwargs(
+                source=["SBDB"],
+                A1=[0.0],
+                A2=[0.0],
+                A3=[None],
+            ),
+            coordinates=CartesianCoordinates.from_kwargs(
+                x=[1.0],
+                y=[0.0],
+                z=[0.0],
+                vx=[0.0],
+                vy=[0.017],
+                vz=[0.0],
+                covariance=CoordinateCovariances.from_matrix(
+                    covariance[np.newaxis, ...]
+                ),
+                time=Timestamp.from_mjd([60000.0], scale="tdb"),
+                origin=Origin.from_kwargs(code=["SUN"]),
+                frame="ecliptic",
+            ),
+        )
+
+    times = Timestamp.from_mjd([60030.0], scale="tdb")
+    propagated = propagate_2body(_orbit(full), times)
+    control = propagate_2body(_orbit(full[:6, :6].copy()), times)
+
+    out = propagated.coordinates.covariance
+    assert out.nongrav_block_mask().tolist() == [True]
+    full_out = out.to_full_matrix()[0]
+
+    # The A-block is dynamically inert under 2-body dynamics.
+    np.testing.assert_array_equal(full_out[6:, 6:], full[6:, 6:])
+
+    # The coordinate block matches a plain 6x6 propagation of the same orbit.
+    np.testing.assert_allclose(
+        full_out[:6, :6],
+        control.coordinates.covariance.to_matrix()[0],
+        rtol=1e-12,
+    )
+
+    # The cross-covariances were transformed (not copied verbatim). The
+    # entries are ~1e-21, far below np.allclose's default atol, so the
+    # comparison must be scaled to the column itself.
+    cross_scale = np.abs(full[:6, 6]).max()
+    assert not np.allclose(
+        full_out[:6, 6], full[:6, 6], rtol=0.0, atol=1e-3 * cross_scale
+    )
+    # ... by a linear map: the exact 1:2 column ratio survives the STM.
+    np.testing.assert_allclose(full_out[:6, 7], 2.0 * full_out[:6, 6], rtol=1e-12)
 
 
 def test_propagate_2body_does_not_include_padded_rows() -> None:
